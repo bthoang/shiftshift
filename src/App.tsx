@@ -454,7 +454,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
           )}
 
           {/* Setup */}
-          {activeTab === 'setup' && (currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+          {activeTab === 'setup' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager') && (
             <SetupWizard 
               businessId={currentUser.business_id} 
               onComplete={handleSetupComplete}
@@ -462,7 +462,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
           )}
 
           {/* Workers */}
-          {activeTab === 'workers' && (
+          {activeTab === 'workers' && currentUser && (
             <WorkerManagement 
               businessId={currentUser.business_id}
               workers={workers}
@@ -476,7 +476,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold text-gray-900">Schedule</h2>
-                {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+                {currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager') && (
                   <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2">
                     <RefreshCw className="h-4 w-4" />
                     <span>Generate Schedule</span>
