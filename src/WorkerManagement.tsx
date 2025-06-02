@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Edit, Trash2, Star, Mail, Loader2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Star, Mail, Loader2, Lock } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 interface Worker {
@@ -30,6 +30,7 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    password: '',
     rating: 5,
     selectedRoles: [] as number[]
   });
@@ -63,11 +64,10 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
         
         if (workerError) throw workerError;
 
-        // Create auth user
-        const password = formData.name.split(' ')[0].toLowerCase() + '123';
+        // Create auth user with custom password
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
           email: formData.email,
-          password: password,
+          password: formData.password,
           email_confirm: true,
           user_metadata: {
             name: formData.name,
@@ -86,16 +86,16 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
             .eq('id', authData.user.id);
         }
 
-        alert(`Worker created!\nEmail: ${formData.email}\nPassword: ${password}`);
+        alert(`Worker account created successfully!\n\nLogin credentials:\nEmail: ${formData.email}\nPassword: ${formData.password}\n\nPlease share these credentials with ${formData.name}`);
       }
 
       onWorkersUpdate();
       setShowAddWorker(false);
       setEditingWorker(null);
-      setFormData({ name: '', email: '', rating: 5, selectedRoles: [] });
-    } catch (error) {
+      setFormData({ name: '', email: '', password: '', rating: 5, selectedRoles: [] });
+    } catch (error: any) {
       console.error('Error:', error);
-      alert('Failed to save worker');
+      alert(error.message || 'Failed to save worker');
     } finally {
       setSaving(false);
     }
@@ -124,7 +124,7 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
         <h2 className="text-2xl font-bold text-gray-900">Workers</h2>
         <button
           onClick={() => {
-            setFormData({ name: '', email: '', rating: 5, selectedRoles: [] });
+            setFormData({ name: '', email: '', password: '', rating: 5, selectedRoles: [] });
             setEditingWorker(null);
             setShowAddWorker(true);
           }}
@@ -173,6 +173,7 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                       setFormData({
                         name: worker.name,
                         email: worker.email,
+                        password: '',
                         rating: worker.rating,
                         selectedRoles: worker.roles
                       });
@@ -228,6 +229,22 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                 />
               </div>
 
+              {!editingWorker && (
+                <div>
+                  <label className="block text-sm font-medium mb-1">Password</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                    placeholder="Minimum 6 characters"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Set a temporary password for the worker. They can change it after logging in.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium mb-1">Rating (1-10)</label>
                 <input
@@ -273,7 +290,14 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={handleSubmit}
-                disabled={saving || !formData.name || !formData.email || formData.selectedRoles.length === 0}
+                disabled={
+                  saving || 
+                  !formData.name || 
+                  !formData.email || 
+                  (!editingWorker && !formData.password) ||
+                  (!editingWorker && formData.password.length < 6) ||
+                  formData.selectedRoles.length === 0
+                }
                 className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 flex items-center justify-center"
               >
                 {saving ? (
