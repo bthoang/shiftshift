@@ -65,6 +65,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
   // UI state
   const [activeTab, setActiveTab] = useState('dashboard');
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
 
   // Check for existing session on mount
   useEffect(() => {
