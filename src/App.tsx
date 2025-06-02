@@ -547,6 +547,10 @@ const EmployeeSchedulingSystem: React.FC = () => {
               </div>
             </div>
           )}
+          {/* Password Change Modal */}
+          {showPasswordChange && (
+            <PasswordChange onClose={() => setShowPasswordChange(false)} />
+          )}
         </main>
       </div>
     </div>
