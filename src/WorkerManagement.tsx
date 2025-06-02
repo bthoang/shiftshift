@@ -102,7 +102,7 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
   };
 
   const handleDelete = async (workerId: string) => {
-    if (!confirm('Are you sure you want to delete this worker?')) return;
+    if (!window.confirm('Are you sure you want to delete this worker?')) return;
     
     try {
       const { error } = await supabase
