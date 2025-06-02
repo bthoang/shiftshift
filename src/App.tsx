@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2 } from 'lucide-react';
+import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2, Lock } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import SetupWizard from './SetupWizard';
 import WorkerManagement from './WorkerManagement';
@@ -548,12 +548,13 @@ const EmployeeSchedulingSystem: React.FC = () => {
               </div>
             </div>
           )}
-          {/* Password Change Modal */}
-          {showPasswordChange && (
-            <PasswordChange onClose={() => setShowPasswordChange(false)} />
-          )}
         </main>
       </div>
+
+      {/* Password Change Modal */}
+      {showPasswordChange && (
+        <PasswordChange onClose={() => setShowPasswordChange(false)} />
+      )}
     </div>
   );
 };
