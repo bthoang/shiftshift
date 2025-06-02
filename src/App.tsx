@@ -3,6 +3,7 @@ import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, P
 import { supabase } from './supabaseClient';
 import SetupWizard from './SetupWizard';
 import WorkerManagement from './WorkerManagement';
+import PasswordChange from './PasswordChange';
 
 // Types
 interface User {
@@ -346,6 +347,15 @@ const EmployeeSchedulingSystem: React.FC = () => {
                   {currentUser?.role}
                 </span>
               </div>
+              {currentUser?.role === 'employee' && (
+                <button
+                  onClick={() => setShowPasswordChange(true)}
+                  className="text-gray-600 hover:text-gray-800 flex items-center space-x-1 text-sm"
+                >
+                  <Lock className="h-4 w-4" />
+                  <span>Change Password</span>
+                </button>
+              )}
               <button
                 onClick={handleLogout}
                 className="text-gray-400 hover:text-gray-600"
