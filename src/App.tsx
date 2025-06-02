@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import SetupWizard from './SetupWizard';
+import WorkerManagement from './WorkerManagement';
 
 // Types
 interface User {
@@ -451,41 +452,14 @@ const EmployeeSchedulingSystem: React.FC = () => {
 
           {/* Workers */}
           {activeTab === 'workers' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Workers</h2>
-                <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2">
-                  <Plus className="h-4 w-4" />
-                  <span>Add Worker</span>
-                </button>
-              </div>
-
-              <div className="bg-white rounded-lg shadow">
-                <div className="p-6">
-                  {workers.length === 0 ? (
-                    <p className="text-gray-500 text-center py-8">
-                      No workers added yet. Click "Add Worker" to get started.
-                    </p>
-                  ) : (
-                    <div className="space-y-4">
-                      {workers.map((worker) => (
-                        <div key={worker.id} className="border rounded-lg p-4 flex items-center justify-between">
-                          <div>
-                            <p className="font-medium text-gray-900">{worker.name}</p>
-                            <p className="text-sm text-gray-500">{worker.email}</p>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-sm text-gray-600">Rating: {worker.rating}/10</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <WorkerManagement 
+              businessId={currentUser.business_id}
+              workers={workers}
+              roles={currentBusiness?.roles || []}
+              onWorkersUpdate={loadBusinessData}
+            />
           )}
-
+          
           {/* Schedule */}
           {activeTab === 'schedule' && (
             <div className="space-y-6">
