@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2, Lock } from 'lucide-react';
+import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2, Lock, UserPlus } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import SetupWizard from './SetupWizard';
 import WorkerManagement from './WorkerManagement';
 import PasswordChange from './PasswordChange';
+import AvailabilityManagement from './AvailabilityManagement';
+import ScheduleGenerator from './ScheduleGenerator';
 
 // Types
 interface User {
@@ -23,6 +25,8 @@ interface Worker {
   roles: number[];
   business_id: string;
   monthly_availability: Record<string, Record<string, boolean>>;
+  invite_sent: boolean;
+  user_created: boolean;
 }
 
 interface Business {
@@ -54,9 +58,11 @@ const EmployeeSchedulingSystem: React.FC = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [signupForm, setSignupForm] = useState({ email: '', password: '', name: '' });
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSignup, setShowSignup] = useState(false);
 
   // Business state
   const [currentBusiness, setCurrentBusiness] = useState<Business | null>(null);
@@ -168,6 +174,68 @@ const EmployeeSchedulingSystem: React.FC = () => {
     }
   };
 
+  // Signup function for workers
+  const handleSignup = async () => {
+    setAuthLoading(true);
+    setError(null);
+    
+    try {
+      // First, check if there's a worker record with this email
+      const { data: workerData } = await supabase
+        .from('workers')
+        .select('*')
+        .eq('email', signupForm.email)
+        .single();
+
+      if (!workerData) {
+        throw new Error('No worker account found with this email. Please contact your administrator.');
+      }
+
+      // Sign up the user
+      const { data, error } = await supabase.auth.signUp({
+        email: signupForm.email,
+        password: signupForm.password,
+        options: {
+          data: {
+            name: signupForm.name
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.user) {
+        // Create user record
+        const { error: userError } = await supabase
+          .from('users')
+          .insert({
+            id: data.user.id,
+            email: signupForm.email,
+            name: signupForm.name,
+            role: 'employee',
+            business_id: workerData.business_id,
+            worker_id: workerData.id
+          });
+
+        if (userError) throw userError;
+
+        // Update worker record to mark as having user account
+        await supabase
+          .from('workers')
+          .update({ user_created: true })
+          .eq('id', workerData.id);
+
+        alert('Account created successfully! You can now log in.');
+        setShowSignup(false);
+        setSignupForm({ email: '', password: '', name: '' });
+      }
+    } catch (error: any) {
+      setError(error.message || 'Signup failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   // Logout function
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -176,6 +244,8 @@ const EmployeeSchedulingSystem: React.FC = () => {
     setCurrentBusiness(null);
     setWorkers([]);
     setLoginForm({ email: '', password: '' });
+    setSignupForm({ email: '', password: '', name: '' });
+    setShowSignup(false);
   };
 
   // Add notification
@@ -248,7 +318,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
     );
   }
 
-  // Login Screen
+  // Login/Signup Screen
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -259,57 +329,154 @@ const EmployeeSchedulingSystem: React.FC = () => {
             <p className="text-gray-600">Employee Scheduling System</p>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input
-                type="email"
-                value={loginForm.email}
-                onChange={(e) => setLoginForm({...loginForm, email: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                placeholder="Enter your email"
-                disabled={authLoading}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <input
-                type="password"
-                value={loginForm.password}
-                onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                placeholder="Enter your password"
-                disabled={authLoading}
-              />
-            </div>
-
-            {error && (
-              <div className="text-red-600 text-sm bg-red-50 p-2 rounded">
-                {error}
+          {!showSignup ? (
+            /* Login Form */
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={loginForm.email}
+                  onChange={(e) => setLoginForm({...loginForm, email: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Enter your email"
+                  disabled={authLoading}
+                />
               </div>
-            )}
 
-            <button
-              onClick={handleLogin}
-              disabled={authLoading}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center"
-            >
-              {authLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Logging in...
-                </>
-              ) : (
-                'Login'
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input
+                  type="password"
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Enter your password"
+                  disabled={authLoading}
+                />
+              </div>
+
+              {error && (
+                <div className="text-red-600 text-sm bg-red-50 p-2 rounded">
+                  {error}
+                </div>
               )}
-            </button>
-          </div>
+
+              <button
+                onClick={handleLogin}
+                disabled={authLoading}
+                className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center"
+              >
+                {authLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Logging in...
+                  </>
+                ) : (
+                  'Login'
+                )}
+              </button>
+
+              <div className="text-center">
+                <button
+                  onClick={() => {
+                    setShowSignup(true);
+                    setError(null);
+                  }}
+                  className="text-blue-600 hover:text-blue-700 text-sm flex items-center justify-center space-x-1 mx-auto"
+                >
+                  <UserPlus className="h-4 w-4" />
+                  <span>Create Worker Account</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Signup Form */
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                <input
+                  type="text"
+                  value={signupForm.name}
+                  onChange={(e) => setSignupForm({...signupForm, name: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Enter your full name"
+                  disabled={authLoading}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Work Email</label>
+                <input
+                  type="email"
+                  value={signupForm.email}
+                  onChange={(e) => setSignupForm({...signupForm, email: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Email provided by your employer"
+                  disabled={authLoading}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Use the email address your administrator provided
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Choose Password</label>
+                <input
+                  type="password"
+                  value={signupForm.password}
+                  onChange={(e) => setSignupForm({...signupForm, password: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Create a secure password"
+                  disabled={authLoading}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Minimum 6 characters
+                </p>
+              </div>
+
+              {error && (
+                <div className="text-red-600 text-sm bg-red-50 p-2 rounded">
+                  {error}
+                </div>
+              )}
+
+              <button
+                onClick={handleSignup}
+                disabled={authLoading || !signupForm.name || !signupForm.email || signupForm.password.length < 6}
+                className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 disabled:bg-gray-400 flex items-center justify-center"
+              >
+                {authLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Creating Account...
+                  </>
+                ) : (
+                  'Create Account'
+                )}
+              </button>
+
+              <div className="text-center">
+                <button
+                  onClick={() => {
+                    setShowSignup(false);
+                    setError(null);
+                  }}
+                  className="text-gray-600 hover:text-gray-700 text-sm"
+                >
+                  Back to Login
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="mt-6 text-sm text-gray-600">
             <p className="font-medium mb-2">Note:</p>
             <p className="text-xs text-gray-500">
-              Contact your administrator for login credentials
+              {showSignup 
+                ? "Only create an account if your administrator has added you as a worker"
+                : "Contact your administrator for login credentials or to create a worker account"
+              }
             </p>
           </div>
         </div>
@@ -431,12 +598,16 @@ const EmployeeSchedulingSystem: React.FC = () => {
                   <p className="text-3xl font-bold text-blue-600">{workers.length}</p>
                 </div>
                 <div className="bg-white p-6 rounded-lg shadow">
-                  <h3 className="text-lg font-medium mb-2">Active Shifts</h3>
-                  <p className="text-3xl font-bold text-green-600">0</p>
+                  <h3 className="text-lg font-medium mb-2">Active Workers</h3>
+                  <p className="text-3xl font-bold text-green-600">
+                    {workers.filter(w => w.user_created).length}
+                  </p>
                 </div>
                 <div className="bg-white p-6 rounded-lg shadow">
-                  <h3 className="text-lg font-medium mb-2">Pending Requests</h3>
-                  <p className="text-3xl font-bold text-orange-600">0</p>
+                  <h3 className="text-lg font-medium mb-2">Pending Setup</h3>
+                  <p className="text-3xl font-bold text-orange-600">
+                    {workers.filter(w => !w.user_created).length}
+                  </p>
                 </div>
               </div>
 
@@ -474,23 +645,28 @@ const EmployeeSchedulingSystem: React.FC = () => {
           {/* Schedule */}
           {activeTab === 'schedule' && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Schedule</h2>
-                {currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager') && (
-                  <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2">
-                    <RefreshCw className="h-4 w-4" />
-                    <span>Generate Schedule</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="bg-white rounded-lg shadow p-6">
-                <p className="text-gray-500 text-center py-8">
-                  {isSetupComplete() 
-                    ? "No schedule generated yet. Click 'Generate Schedule' to create one."
-                    : "Please complete the initial setup before generating schedules."}
-                </p>
-              </div>
+              {currentUser?.role === 'employee' ? (
+                // Employee Schedule View
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900 mb-6">My Schedule</h2>
+                  <div className="bg-white rounded-lg shadow p-6">
+                    <p className="text-gray-500 text-center py-8">
+                      {isSetupComplete() 
+                        ? "Your schedule will appear here once your administrator generates it."
+                        : "Please wait for your administrator to complete the system setup."}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                // Admin Schedule Generator
+                currentUser && (
+                  <ScheduleGenerator
+                    businessId={currentUser.business_id}
+                    currentBusiness={currentBusiness}
+                    workers={workers}
+                  />
+                )
+              )}
             </div>
           )}
 
@@ -537,16 +713,12 @@ const EmployeeSchedulingSystem: React.FC = () => {
           )}
 
           {/* Availability (Employee) */}
-          {activeTab === 'availability' && currentUser?.role === 'employee' && (
-            <div className="space-y-6">
-              <h2 className="text-2xl font-bold text-gray-900">My Availability</h2>
-              
-              <div className="bg-white rounded-lg shadow p-6">
-                <p className="text-gray-500 text-center py-8">
-                  Availability management will be available once the system is fully configured.
-                </p>
-              </div>
-            </div>
+          {activeTab === 'availability' && currentUser?.role === 'employee' && currentUser.worker_id && (
+            <AvailabilityManagement
+              workerId={currentUser.worker_id}
+              currentUser={currentUser}
+              currentBusiness={currentBusiness}
+            />
           )}
         </main>
       </div>
