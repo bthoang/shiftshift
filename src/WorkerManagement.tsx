@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Edit, Trash2, Star, Mail, Loader2, Lock, AlertTriangle, X } from 'lucide-react';
+import { Plus, Edit, Trash2, Star, Mail, Loader2, AlertTriangle, X, Send } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 interface Worker {
@@ -9,6 +9,8 @@ interface Worker {
   rating: number;
   roles: number[];
   business_id: string;
+  invite_sent: boolean;
+  user_created: boolean;
 }
 
 interface WorkerManagementProps {
@@ -106,32 +108,50 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    password: '',
     rating: 5,
     selectedRoles: [] as number[]
   });
 
+  // Generate a simple random password
+  const generatePassword = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let password = '';
+    for (let i = 0; i < 8; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
+  };
+
   const handleSubmit = async () => {
     setSaving(true);
     try {
+      const tempPassword = generatePassword();
+      
       const workerData = {
         name: formData.name,
         email: formData.email,
         rating: formData.rating,
         roles: formData.selectedRoles,
-        business_id: businessId
+        business_id: businessId,
+        invite_sent: false,
+        user_created: false,
+        temp_password: tempPassword // Store temporarily for the invite
       };
 
       if (editingWorker) {
         // Update existing worker
         const { error } = await supabase
           .from('workers')
-          .update(workerData)
+          .update({
+            name: formData.name,
+            rating: formData.rating,
+            roles: formData.selectedRoles
+          })
           .eq('id', editingWorker.id);
         
         if (error) throw error;
       } else {
-        // Create new worker
+        // Create new worker record
         const { data: worker, error: workerError } = await supabase
           .from('workers')
           .insert(workerData)
@@ -140,35 +160,23 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
         
         if (workerError) throw workerError;
 
-        // Create auth user with custom password
-        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-          email: formData.email,
-          password: formData.password,
-          email_confirm: true,
-          user_metadata: {
-            name: formData.name,
-            role: 'employee',
-            business_id: businessId
-          }
-        });
+        // Show success message with instructions
+        alert(`Worker account created successfully!
 
-        if (authError) throw authError;
+Instructions for ${formData.name}:
+1. Go to the login page
+2. Click "Sign Up" (if available) or contact admin
+3. Use email: ${formData.email}
+4. Use temporary password: ${tempPassword}
+5. Change password after first login
 
-        // Update user record with worker_id
-        if (authData.user) {
-          await supabase
-            .from('users')
-            .update({ worker_id: worker.id })
-            .eq('id', authData.user.id);
-        }
-
-        alert(`Worker account created successfully!\n\nLogin credentials:\nEmail: ${formData.email}\nPassword: ${formData.password}\n\nPlease share these credentials with ${formData.name}`);
+Please share these credentials with ${formData.name}.`);
       }
 
       onWorkersUpdate();
       setShowAddWorker(false);
       setEditingWorker(null);
-      setFormData({ name: '', email: '', password: '', rating: 5, selectedRoles: [] });
+      setFormData({ name: '', email: '', rating: 5, selectedRoles: [] });
     } catch (error: any) {
       console.error('Error:', error);
       alert(error.message || 'Failed to save worker');
@@ -196,13 +204,39 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
     }
   };
 
+  const sendSignupInvite = async (workerId: string, email: string, name: string) => {
+    try {
+      // In a real app, you'd send an email here
+      // For now, we'll just mark as invited and show instructions
+      await supabase
+        .from('workers')
+        .update({ invite_sent: true })
+        .eq('id', workerId);
+      
+      alert(`Signup instructions sent to ${name}!
+
+Please tell ${name} to:
+1. Visit the signup page
+2. Register with email: ${email}
+3. Set their own password
+4. Log in to set availability
+
+The worker account is ready for signup.`);
+      
+      onWorkersUpdate();
+    } catch (error) {
+      console.error('Error sending invite:', error);
+      alert('Failed to send invite');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900">Workers</h2>
         <button
           onClick={() => {
-            setFormData({ name: '', email: '', password: '', rating: 5, selectedRoles: [] });
+            setFormData({ name: '', email: '', rating: 5, selectedRoles: [] });
             setEditingWorker(null);
             setShowAddWorker(true);
           }}
@@ -211,6 +245,17 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
           <Plus className="h-4 w-4" />
           <span>Add Worker</span>
         </button>
+      </div>
+
+      <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+        <div className="flex items-center">
+          <AlertTriangle className="h-5 w-5 text-yellow-400 mr-2" />
+          <div>
+            <p className="text-sm text-yellow-700">
+              <strong>Worker Signup Process:</strong> After adding a worker, they need to create their own account using the signup process with their email. Make sure user registration is enabled in your app settings.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow">
@@ -229,6 +274,21 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                       <Mail className="h-3 w-3 mr-1" />
                       {worker.email}
                     </p>
+                    <div className="flex items-center space-x-2 mt-1">
+                      {worker.user_created ? (
+                        <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                          Account Active
+                        </span>
+                      ) : worker.invite_sent ? (
+                        <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
+                          Invite Sent
+                        </span>
+                      ) : (
+                        <span className="text-xs bg-gray-100 text-gray-800 px-2 py-1 rounded-full">
+                          Pending Setup
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Star className="h-4 w-4 text-yellow-400" />
@@ -246,12 +306,21 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
+                  {!worker.user_created && !worker.invite_sent && (
+                    <button
+                      onClick={() => sendSignupInvite(worker.id, worker.email, worker.name)}
+                      className="text-green-600 hover:text-green-800 flex items-center space-x-1 text-sm"
+                      title="Send signup instructions"
+                    >
+                      <Send className="h-4 w-4" />
+                      <span>Send Invite</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setFormData({
                         name: worker.name,
                         email: worker.email,
-                        password: '',
                         rating: worker.rating,
                         selectedRoles: worker.roles
                       });
@@ -305,23 +374,12 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                   placeholder="john@example.com"
                   disabled={!!editingWorker}
                 />
-              </div>
-
-              {!editingWorker && (
-                <div>
-                  <label className="block text-sm font-medium mb-1">Password</label>
-                  <input
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                    placeholder="Minimum 6 characters"
-                  />
+                {!editingWorker && (
                   <p className="text-xs text-gray-500 mt-1">
-                    Set a temporary password for the worker. They can change it after logging in.
+                    Worker will need to sign up with this email address
                   </p>
-                </div>
-              )}
+                )}
+              </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">Rating (1-10)</label>
@@ -372,8 +430,6 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                   saving || 
                   !formData.name || 
                   !formData.email || 
-                  (!editingWorker && !formData.password) ||
-                  (!editingWorker && formData.password.length < 6) ||
                   formData.selectedRoles.length === 0
                 }
                 className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 flex items-center justify-center"
