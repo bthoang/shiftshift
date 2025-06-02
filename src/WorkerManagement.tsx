@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Edit, Trash2, Star, Mail, Loader2, Lock } from 'lucide-react';
+import { Plus, Edit, Trash2, Star, Mail, Loader2, Lock, AlertTriangle, X } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 interface Worker {
@@ -18,6 +18,81 @@ interface WorkerManagementProps {
   onWorkersUpdate: () => void;
 }
 
+// Confirmation Modal Component
+interface ConfirmationModalProps {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  confirmText?: string;
+  cancelText?: string;
+  type?: 'danger' | 'warning' | 'info';
+}
+
+const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
+  isOpen,
+  title,
+  message,
+  onConfirm,
+  onCancel,
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
+  type = 'danger'
+}) => {
+  if (!isOpen) return null;
+
+  const getButtonColor = () => {
+    switch (type) {
+      case 'danger':
+        return 'bg-red-600 hover:bg-red-700';
+      case 'warning':
+        return 'bg-yellow-600 hover:bg-yellow-700';
+      default:
+        return 'bg-blue-600 hover:bg-blue-700';
+    }
+  };
+
+  const getIconColor = () => {
+    switch (type) {
+      case 'danger':
+        return 'text-red-600';
+      case 'warning':
+        return 'text-yellow-600';
+      default:
+        return 'text-blue-600';
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <div className="flex items-center mb-4">
+          <AlertTriangle className={`h-6 w-6 ${getIconColor()} mr-3`} />
+          <h3 className="text-lg font-bold">{title}</h3>
+        </div>
+        
+        <p className="text-gray-600 mb-6">{message}</p>
+        
+        <div className="flex space-x-3">
+          <button
+            onClick={onConfirm}
+            className={`flex-1 ${getButtonColor()} text-white py-2 rounded-lg transition-colors`}
+          >
+            {confirmText}
+          </button>
+          <button
+            onClick={onCancel}
+            className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+          >
+            {cancelText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const WorkerManagement: React.FC<WorkerManagementProps> = ({ 
   businessId, 
   workers, 
@@ -27,6 +102,7 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
   const [showAddWorker, setShowAddWorker] = useState(false);
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
   const [saving, setSaving] = useState(false);
+  const [workerToDelete, setWorkerToDelete] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -101,20 +177,22 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
     }
   };
 
-  const handleDelete = async (workerId: string) => {
-    if (!window.confirm('Are you sure you want to delete this worker?')) return;
+  const handleDeleteConfirm = async () => {
+    if (!workerToDelete) return;
     
     try {
       const { error } = await supabase
         .from('workers')
         .delete()
-        .eq('id', workerId);
+        .eq('id', workerToDelete);
       
       if (error) throw error;
       onWorkersUpdate();
     } catch (error) {
       console.error('Error:', error);
       alert('Failed to delete worker');
+    } finally {
+      setWorkerToDelete(null);
     }
   };
 
@@ -185,7 +263,7 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                     <Edit className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => handleDelete(worker.id)}
+                    onClick={() => setWorkerToDelete(worker.id)}
                     className="text-red-600 hover:text-red-800"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -322,6 +400,18 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={workerToDelete !== null}
+        title="Delete Worker"
+        message="Are you sure you want to delete this worker? This action cannot be undone."
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setWorkerToDelete(null)}
+        confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+      />
     </div>
   );
 };
