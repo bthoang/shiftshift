@@ -235,19 +235,21 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ businessId, onComplete }) => 
       }));
 
       // Format day configs for database
+      // Format day configs for database
       const dayConfigs: Record<number, any> = {};
       DAYS_OF_WEEK.forEach((day, index) => {
         const daySchedule = weeklySchedule[day];
         if (daySchedule.enabled) {
-          dayConfigs[index] = {
+          // Fix: Map days correctly (Monday=1, Sunday=0)
+          const dayIndex = day === 'Sunday' ? 0 : index + 1;
+          dayConfigs[dayIndex] = {
             shifts: daySchedule.shifts.map(shift => ({
               name: shift.name,
               start: shift.startTime,
               end: shift.endTime,
               role_requirements: shift.roleRequirements.reduce((acc, req) => {
-                const role = roles.find(r => r.id === req.roleId);
                 const roleIndex = roles.findIndex(r => r.id === req.roleId) + 1;
-                if (role) {
+                if (roleIndex > 0) {
                   acc[roleIndex] = req.count;
                 }
                 return acc;
