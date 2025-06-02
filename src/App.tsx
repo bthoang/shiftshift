@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import SetupWizard from './SetupWizard';
 
 // Types
 interface User {
@@ -189,6 +190,13 @@ const EmployeeSchedulingSystem: React.FC = () => {
   const isSetupComplete = () => {
     if (!currentBusiness) return false;
     return currentBusiness.setup_complete;
+  };
+
+  // Handle setup completion
+  const handleSetupComplete = async () => {
+    await loadBusinessData();
+    setActiveTab('dashboard');
+    addNotification('Setup completed successfully!', 'success');
   };
 
   // Navigation items
@@ -435,35 +443,10 @@ const EmployeeSchedulingSystem: React.FC = () => {
 
           {/* Setup */}
           {activeTab === 'setup' && (currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
-            <div className="max-w-4xl mx-auto">
-              <div className="bg-white rounded-lg shadow-lg p-8">
-                <h2 className="text-3xl font-bold text-gray-900 mb-4">Initial Setup</h2>
-                <p className="text-lg text-gray-600 mb-8">
-                  Welcome to ShiftSmart! To get started, you'll need to configure your business settings.
-                </p>
-
-                <div className="space-y-6">
-                  <div className="border rounded-lg p-6">
-                    <h3 className="text-xl font-bold text-gray-900 mb-2">Quick Start Guide</h3>
-                    <ol className="list-decimal list-inside space-y-2 text-gray-600">
-                      <li>Configure your business roles (e.g., Server, Cook, Manager)</li>
-                      <li>Set up shift patterns for each day of the week</li>
-                      <li>Add your workers to the system</li>
-                      <li>Workers submit their monthly availability</li>
-                      <li>Generate schedules automatically</li>
-                    </ol>
-                  </div>
-
-                  <div className="bg-blue-50 rounded-lg p-6">
-                    <h3 className="font-medium text-blue-900 mb-2">Need Help?</h3>
-                    <p className="text-blue-800">
-                      The full setup wizard is available in the complete version. 
-                      Please refer to the deployment guide for setup instructions.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <SetupWizard 
+              businessId={currentUser.business_id} 
+              onComplete={handleSetupComplete}
+            />
           )}
 
           {/* Workers */}
@@ -543,9 +526,26 @@ const EmployeeSchedulingSystem: React.FC = () => {
                       disabled
                     />
                   </div>
-                  <p className="text-sm text-gray-500">
-                    To modify business settings, please use the complete setup wizard.
-                  </p>
+                  {isSetupComplete() && currentBusiness?.roles && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Configured Roles</label>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {currentBusiness.roles.map((role) => (
+                          <span key={role.id} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
+                            {role.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-4">
+                    <button
+                      onClick={() => setActiveTab('setup')}
+                      className="text-blue-600 hover:text-blue-700 text-sm"
+                    >
+                      {isSetupComplete() ? 'Modify Setup Configuration' : 'Run Initial Setup'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
