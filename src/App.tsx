@@ -174,63 +174,96 @@ const EmployeeSchedulingSystem: React.FC = () => {
     }
   };
 
-  // Signup function for workers
   const handleSignup = async () => {
     setAuthLoading(true);
     setError(null);
     
     try {
       // First, check if there's a worker record with this email
-      const { data: workerData } = await supabase
+      const { data: workerData, error: workerError } = await supabase
         .from('workers')
         .select('*')
         .eq('email', signupForm.email)
         .single();
-
-      if (!workerData) {
+  
+      if (workerError || !workerData) {
         throw new Error('No worker account found with this email. Please contact your administrator.');
       }
-
-      // Sign up the user
-      const { data, error } = await supabase.auth.signUp({
+  
+      // Sign up the user with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email: signupForm.email,
         password: signupForm.password,
         options: {
           data: {
-            name: signupForm.name
+            name: signupForm.name,
+            worker_id: workerData.id,
+            business_id: workerData.business_id
           }
         }
       });
-
-      if (error) throw error;
-
-      if (data.user) {
-        // Create user record
+  
+      if (authError) throw authError;
+  
+      if (authData.user) {
+        // Create user record in the users table
         const { error: userError } = await supabase
           .from('users')
           .insert({
-            id: data.user.id,
+            id: authData.user.id,
             email: signupForm.email,
             name: signupForm.name,
             role: 'employee',
             business_id: workerData.business_id,
             worker_id: workerData.id
           });
-
-        if (userError) throw userError;
-
+  
+        if (userError) {
+          console.error('Error creating user record:', userError);
+          // If user record creation fails, we should still update the worker
+          // This handles cases where the user might already exist
+        }
+  
         // Update worker record to mark as having user account
-        await supabase
+        // This should work even if the user record already exists
+        const { error: updateError } = await supabase
           .from('workers')
           .update({ user_created: true })
           .eq('id', workerData.id);
-
-        alert('Account created successfully! You can now log in.');
+  
+        if (updateError) {
+          console.error('Error updating worker status:', updateError);
+        }
+  
+        // Show success message
+        alert(`Account created successfully! 
+        
+  Welcome ${signupForm.name}! 
+        
+  You can now log in with:
+  Email: ${signupForm.email}
+  Password: [the password you just created]
+  
+  Click "Back to Login" to sign in.`);
+        
+        // Clear form and go back to login
         setShowSignup(false);
         setSignupForm({ email: '', password: '', name: '' });
+        
+        // Pre-fill login form with their email
+        setLoginForm({ ...loginForm, email: signupForm.email });
       }
     } catch (error: any) {
-      setError(error.message || 'Signup failed');
+      console.error('Signup error:', error);
+      
+      // Provide helpful error messages
+      if (error.message?.includes('User already registered')) {
+        setError('An account with this email already exists. Please log in instead.');
+      } else if (error.message?.includes('No worker account found')) {
+        setError(error.message);
+      } else {
+        setError(error.message || 'Signup failed. Please try again.');
+      }
     } finally {
       setAuthLoading(false);
     }
