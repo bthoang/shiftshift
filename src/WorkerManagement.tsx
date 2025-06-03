@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Edit, Trash2, Star, Mail, Loader2, AlertTriangle, X, Send } from 'lucide-react';
+import { Plus, Edit, Trash2, Star, Mail, Loader2, AlertTriangle, X, Send, UserPlus } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 interface Worker {
@@ -105,6 +105,8 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
   const [saving, setSaving] = useState(false);
   const [workerToDelete, setWorkerToDelete] = useState<string | null>(null);
+  const [showInstructions, setShowInstructions] = useState(false);
+  const [currentInstructions, setCurrentInstructions] = useState({ name: '', email: '' });
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -112,21 +114,9 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
     selectedRoles: [] as number[]
   });
 
-  // Generate a simple random password
-  const generatePassword = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let password = '';
-    for (let i = 0; i < 8; i++) {
-      password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return password;
-  };
-
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      const tempPassword = generatePassword();
-      
       const workerData = {
         name: formData.name,
         email: formData.email,
@@ -134,12 +124,11 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
         roles: formData.selectedRoles,
         business_id: businessId,
         invite_sent: false,
-        user_created: false,
-        temp_password: tempPassword // Store temporarily for the invite
+        user_created: false
       };
 
       if (editingWorker) {
-        // Update existing worker
+        // Update existing worker (don't update email)
         const { error } = await supabase
           .from('workers')
           .update({
@@ -150,6 +139,10 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
           .eq('id', editingWorker.id);
         
         if (error) throw error;
+        onWorkersUpdate();
+        setShowAddWorker(false);
+        setEditingWorker(null);
+        setFormData({ name: '', email: '', rating: 5, selectedRoles: [] });
       } else {
         // Create new worker record
         const { data: worker, error: workerError } = await supabase
@@ -160,23 +153,14 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
         
         if (workerError) throw workerError;
 
-        // Show success message with instructions
-        alert(`Worker account created successfully!
-
-Instructions for ${formData.name}:
-1. Go to the login page
-2. Click "Sign Up" (if available) or contact admin
-3. Use email: ${formData.email}
-4. Use temporary password: ${tempPassword}
-5. Change password after first login
-
-Please share these credentials with ${formData.name}.`);
+        // Show instructions modal
+        setCurrentInstructions({ name: formData.name, email: formData.email });
+        setShowInstructions(true);
+        
+        onWorkersUpdate();
+        setShowAddWorker(false);
+        setFormData({ name: '', email: '', rating: 5, selectedRoles: [] });
       }
-
-      onWorkersUpdate();
-      setShowAddWorker(false);
-      setEditingWorker(null);
-      setFormData({ name: '', email: '', rating: 5, selectedRoles: [] });
     } catch (error: any) {
       console.error('Error:', error);
       alert(error.message || 'Failed to save worker');
@@ -206,27 +190,20 @@ Please share these credentials with ${formData.name}.`);
 
   const sendSignupInvite = async (workerId: string, email: string, name: string) => {
     try {
-      // In a real app, you'd send an email here
-      // For now, we'll just mark as invited and show instructions
+      // Mark as invite sent
       await supabase
         .from('workers')
         .update({ invite_sent: true })
         .eq('id', workerId);
       
-      alert(`Signup instructions sent to ${name}!
-
-Please tell ${name} to:
-1. Visit the signup page
-2. Register with email: ${email}
-3. Set their own password
-4. Log in to set availability
-
-The worker account is ready for signup.`);
+      // Show instructions modal
+      setCurrentInstructions({ name, email });
+      setShowInstructions(true);
       
       onWorkersUpdate();
     } catch (error) {
       console.error('Error sending invite:', error);
-      alert('Failed to send invite');
+      alert('Failed to update invite status');
     }
   };
 
@@ -247,12 +224,13 @@ The worker account is ready for signup.`);
         </button>
       </div>
 
-      <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+      <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
         <div className="flex items-center">
-          <AlertTriangle className="h-5 w-5 text-yellow-400 mr-2" />
+          <UserPlus className="h-5 w-5 text-blue-400 mr-2" />
           <div>
-            <p className="text-sm text-yellow-700">
-              <strong>Worker Signup Process:</strong> After adding a worker, they need to create their own account using the signup process with their email. Make sure user registration is enabled in your app settings.
+            <p className="text-sm text-blue-700">
+              <strong>How it works:</strong> Add workers here, then share signup instructions with them. 
+              Workers create their own accounts using the email you specify.
             </p>
           </div>
         </div>
@@ -277,11 +255,11 @@ The worker account is ready for signup.`);
                     <div className="flex items-center space-x-2 mt-1">
                       {worker.user_created ? (
                         <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
-                          Account Active
+                          ✓ Account Active
                         </span>
                       ) : worker.invite_sent ? (
                         <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
-                          Invite Sent
+                          Instructions Sent
                         </span>
                       ) : (
                         <span className="text-xs bg-gray-100 text-gray-800 px-2 py-1 rounded-full">
@@ -306,14 +284,14 @@ The worker account is ready for signup.`);
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
-                  {!worker.user_created && !worker.invite_sent && (
+                  {!worker.user_created && (
                     <button
                       onClick={() => sendSignupInvite(worker.id, worker.email, worker.name)}
                       className="text-green-600 hover:text-green-800 flex items-center space-x-1 text-sm"
-                      title="Send signup instructions"
+                      title="Show signup instructions"
                     >
                       <Send className="h-4 w-4" />
-                      <span>Send Invite</span>
+                      <span>Send Instructions</span>
                     </button>
                   )}
                   <button
@@ -453,6 +431,43 @@ The worker account is ready for signup.`);
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Instructions Modal */}
+      {showInstructions && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center mb-4">
+              <UserPlus className="h-6 w-6 text-blue-600 mr-3" />
+              <h3 className="text-lg font-bold">Worker Setup Instructions</h3>
+            </div>
+            
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <p className="font-medium text-blue-900 mb-2">
+                Share these instructions with {currentInstructions.name}:
+              </p>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-blue-800">
+                <li>Go to the ShiftShift login page</li>
+                <li>Click "Create Worker Account"</li>
+                <li>Sign up using email: <strong>{currentInstructions.email}</strong></li>
+                <li>Create a secure password</li>
+                <li>Complete the signup process</li>
+                <li>Log in to set availability</li>
+              </ol>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              Once {currentInstructions.name} completes signup, their status will update to "Account Active" automatically.
+            </p>
+
+            <button
+              onClick={() => setShowInstructions(false)}
+              className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700"
+            >
+              Got it!
+            </button>
           </div>
         </div>
       )}
