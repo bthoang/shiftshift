@@ -164,12 +164,19 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
       });
 
       // Calculate stats
+      const assignedWorkerIds = new Set();
+      assignments.forEach(assignment => {
+        assignment.assignedWorkers.forEach(worker => {
+          assignedWorkerIds.add(worker.workerId);
+        });
+      });
+
       const stats = {
         totalShifts: assignments.length,
         filledShifts: assignments.filter(a => a.unfilledPositions.length === 0).length,
         unfilledShifts: assignments.filter(a => a.unfilledPositions.length > 0).length,
         totalWorkers: workers.length,
-        workersScheduled: new Set(assignments.flatMap(a => a.assignedWorkers.map(w => w.workerId))).size
+        workersScheduled: assignedWorkerIds.size
       };
 
       setSchedule({
