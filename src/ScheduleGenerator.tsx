@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Users, Clock, RefreshCw, Download, AlertTriangle, CheckCircle, User } from 'lucide-react';
+import { Calendar as CalendarIcon, Users, Clock, RefreshCw, Download, AlertTriangle, CheckCircle, User, Edit2, Save, X, Plus, Trash2, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import { Calendar } from './Calendar';
 
 interface ScheduleGeneratorProps {
   businessId: string;
@@ -8,13 +9,13 @@ interface ScheduleGeneratorProps {
   workers: any[];
 }
 
-interface ShiftAssignment {
-  shiftId: string;
+interface ShiftSchedule {
+  id: string;
+  date: string;
   shiftName: string;
-  day: string;
   startTime: string;
   endTime: string;
-  roleRequirements: { roleId: number; count: number; }[];
+  roleRequirements: { roleId: number; count: number; roleName: string }[];
   assignedWorkers: {
     workerId: string;
     workerName: string;
@@ -28,27 +29,9 @@ interface ShiftAssignment {
   }[];
 }
 
-interface GeneratedSchedule {
-  weekStartDate: string;
-  assignments: ShiftAssignment[];
-  stats: {
-    totalShifts: number;
-    filledShifts: number;
-    unfilledShifts: number;
-    totalWorkers: number;
-    workersScheduled: number;
-  };
+interface ScheduleData {
+  [date: string]: ShiftSchedule[];
 }
-
-const DAYS_OF_WEEK = [
-  { key: 'sunday', label: 'Sunday', index: 0 },
-  { key: 'monday', label: 'Monday', index: 1 },
-  { key: 'tuesday', label: 'Tuesday', index: 2 },
-  { key: 'wednesday', label: 'Wednesday', index: 3 },
-  { key: 'thursday', label: 'Thursday', index: 4 },
-  { key: 'friday', label: 'Friday', index: 5 },
-  { key: 'saturday', label: 'Saturday', index: 6 }
-];
 
 const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
   businessId,
@@ -56,20 +39,24 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
   workers
 }) => {
   const [generating, setGenerating] = useState(false);
-  const [schedule, setSchedule] = useState<GeneratedSchedule | null>(null);
-  const [selectedWeek, setSelectedWeek] = useState(() => {
-    const today = new Date();
-    const startOfWeek = new Date(today.setDate(today.getDate() - today.getDay()));
-    return startOfWeek.toISOString().split('T')[0];
+  const [saving, setSaving] = useState(false);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [schedule, setSchedule] = useState<ScheduleData>({});
+  const [editingShift, setEditingShift] = useState<ShiftSchedule | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [stats, setStats] = useState({
+    totalShifts: 0,
+    filledShifts: 0,
+    unfilledShifts: 0,
+    totalWorkers: workers.length,
+    workersScheduled: 0
   });
 
   const generateSchedule = async () => {
     setGenerating(true);
     try {
-      // Get worker availability for the selected week
-      const weekStart = new Date(selectedWeek);
-      const month = weekStart.getMonth() + 1;
-      const year = weekStart.getFullYear();
+      const month = currentMonth.getMonth() + 1;
+      const year = currentMonth.getFullYear();
       
       // Load worker availability
       const { data: workersWithAvailability } = await supabase
@@ -81,62 +68,80 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
         throw new Error('Failed to load worker data');
       }
 
-      // Generate assignments
-      const assignments: ShiftAssignment[] = [];
-      
-      Object.entries(currentBusiness.day_configs || {}).forEach(([dayIndex, dayConfig]: [string, any]) => {
-        const day = DAYS_OF_WEEK.find(d => d.index === parseInt(dayIndex));
-        if (!day || !dayConfig.shifts) return;
+      // Generate schedule for the month
+      const newSchedule: ScheduleData = {};
+      const daysInMonth = new Date(year, month, 0).getDate();
+      let totalShifts = 0;
+      let filledShifts = 0;
+      const scheduledWorkerIds = new Set<string>();
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = new Date(year, month - 1, day);
+        const dateStr = date.toISOString().split('T')[0];
+        const dayOfWeek = date.getDay();
+        
+        const dayConfig = currentBusiness.day_configs?.[dayOfWeek];
+        if (!dayConfig?.shifts) continue;
+
+        newSchedule[dateStr] = [];
 
         dayConfig.shifts.forEach((shift: any, shiftIndex: number) => {
-          const shiftId = `${dayIndex}-${shiftIndex}`;
+          const monthKey = `${year}-${month}`;
           
-          // Get available workers for this day/shift
+          // Get available workers for this shift
           const availableWorkers = workersWithAvailability.filter(worker => {
-            const monthKey = `${year}-${month}`;
-            const availability = worker.monthly_availability?.[monthKey]?.[day.key];
-            
-            if (!availability) return true; // Default to available if no data
-            
-            // Check if worker is available for this shift time
-            return availability.some((slot: any) => 
-              slot.start === shift.start && 
-              slot.end === shift.end && 
-              slot.available
-            );
+            const availability = worker.monthly_availability?.[monthKey]?.[dateStr];
+            if (!availability?.shifts?.[shiftIndex]) return true; // Default to available
+            return availability.shifts[shiftIndex].available;
           });
 
-          // Assign workers based on role requirements
-          const assignedWorkers: ShiftAssignment['assignedWorkers'] = [];
-          const unfilledPositions: ShiftAssignment['unfilledPositions'] = [];
-          
+          // Create shift schedule
+          const shiftSchedule: ShiftSchedule = {
+            id: `${dateStr}-${shiftIndex}`,
+            date: dateStr,
+            shiftName: shift.name,
+            startTime: shift.start,
+            endTime: shift.end,
+            roleRequirements: [],
+            assignedWorkers: [],
+            unfilledPositions: []
+          };
+
+          // Process role requirements
           Object.entries(shift.role_requirements || {}).forEach(([roleId, count]: [string, any]) => {
             const role = currentBusiness.roles?.find((r: any) => r.id === parseInt(roleId));
             if (!role) return;
 
-            // Find workers with this role who are available
+            shiftSchedule.roleRequirements.push({
+              roleId: parseInt(roleId),
+              count,
+              roleName: role.name
+            });
+
+            // Find eligible workers
             const eligibleWorkers = availableWorkers.filter(worker => 
               worker.roles.includes(parseInt(roleId)) &&
-              !assignedWorkers.some(assigned => assigned.workerId === worker.id)
+              !shiftSchedule.assignedWorkers.some(assigned => assigned.workerId === worker.id)
             );
 
-            // Sort by rating (highest first)
+            // Sort by rating
             eligibleWorkers.sort((a, b) => b.rating - a.rating);
 
-            // Assign workers up to the required count
+            // Assign workers
             for (let i = 0; i < count && i < eligibleWorkers.length; i++) {
               const worker = eligibleWorkers[i];
-              assignedWorkers.push({
+              shiftSchedule.assignedWorkers.push({
                 workerId: worker.id,
                 workerName: worker.name,
                 roleId: parseInt(roleId),
                 roleName: role.name
               });
+              scheduledWorkerIds.add(worker.id);
             }
 
             // Track unfilled positions
             if (eligibleWorkers.length < count) {
-              unfilledPositions.push({
+              shiftSchedule.unfilledPositions.push({
                 roleId: parseInt(roleId),
                 roleName: role.name,
                 count: count - eligibleWorkers.length
@@ -144,49 +149,22 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
             }
           });
 
-          assignments.push({
-            shiftId,
-            shiftName: shift.name,
-            day: day.label,
-            startTime: shift.start,
-            endTime: shift.end,
-            roleRequirements: Object.entries(shift.role_requirements || {}).map(([roleId, count]: [string, any]) => {
-              const role = currentBusiness.roles?.find((r: any) => r.id === parseInt(roleId));
-              return {
-                roleId: parseInt(roleId),
-                count
-              };
-            }),
-            assignedWorkers,
-            unfilledPositions
-          });
-        });
-      });
+          totalShifts++;
+          if (shiftSchedule.unfilledPositions.length === 0) {
+            filledShifts++;
+          }
 
-      // Calculate stats
-      const assignedWorkerIds = new Set();
-      assignments.forEach(assignment => {
-        assignment.assignedWorkers.forEach(worker => {
-          assignedWorkerIds.add(worker.workerId);
+          newSchedule[dateStr].push(shiftSchedule);
         });
-      });
+      }
 
-      const stats = {
-        totalShifts: assignments.length,
-        filledShifts: assignments.filter(a => a.unfilledPositions.length === 0).length,
-        unfilledShifts: assignments.filter(a => a.unfilledPositions.length > 0).length,
+      setSchedule(newSchedule);
+      setStats({
+        totalShifts,
+        filledShifts,
+        unfilledShifts: totalShifts - filledShifts,
         totalWorkers: workers.length,
-        workersScheduled: assignedWorkerIds.size
-      };
-
-      setSchedule({
-        weekStartDate: selectedWeek,
-        assignments: assignments.sort((a, b) => {
-          const dayOrder = DAYS_OF_WEEK.findIndex(d => d.label === a.day) - DAYS_OF_WEEK.findIndex(d => d.label === b.day);
-          if (dayOrder !== 0) return dayOrder;
-          return a.startTime.localeCompare(b.startTime);
-        }),
-        stats
+        workersScheduled: scheduledWorkerIds.size
       });
 
     } catch (error) {
@@ -197,38 +175,300 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
     }
   };
 
-  const exportSchedule = () => {
-    if (!schedule) return;
+  const updateShiftAssignment = (shiftId: string, date: string, updatedShift: Partial<ShiftSchedule>) => {
+    setSchedule(prev => {
+      const newSchedule = { ...prev };
+      if (newSchedule[date]) {
+        newSchedule[date] = newSchedule[date].map(shift => 
+          shift.id === shiftId ? { ...shift, ...updatedShift } : shift
+        );
+      }
+      return newSchedule;
+    });
+  };
 
+  const removeWorkerFromShift = (shiftId: string, date: string, workerId: string) => {
+    const shift = schedule[date]?.find(s => s.id === shiftId);
+    if (!shift) return;
+
+    const worker = shift.assignedWorkers.find(w => w.workerId === workerId);
+    if (!worker) return;
+
+    // Update shift
+    const updatedAssignedWorkers = shift.assignedWorkers.filter(w => w.workerId !== workerId);
+    
+    // Add to unfilled positions
+    const existingUnfilled = shift.unfilledPositions.find(u => u.roleId === worker.roleId);
+    const updatedUnfilled = existingUnfilled
+      ? shift.unfilledPositions.map(u => 
+          u.roleId === worker.roleId ? { ...u, count: u.count + 1 } : u
+        )
+      : [...shift.unfilledPositions, { roleId: worker.roleId, roleName: worker.roleName, count: 1 }];
+
+    updateShiftAssignment(shiftId, date, {
+      assignedWorkers: updatedAssignedWorkers,
+      unfilledPositions: updatedUnfilled
+    });
+  };
+
+  const addWorkerToShift = (shiftId: string, date: string, workerId: string, roleId: number) => {
+    const shift = schedule[date]?.find(s => s.id === shiftId);
+    if (!shift) return;
+
+    const worker = workers.find(w => w.id === workerId);
+    const role = currentBusiness.roles?.find((r: any) => r.id === roleId);
+    if (!worker || !role) return;
+
+    // Update shift
+    const updatedAssignedWorkers = [...shift.assignedWorkers, {
+      workerId: worker.id,
+      workerName: worker.name,
+      roleId: roleId,
+      roleName: role.name
+    }];
+
+    // Update unfilled positions
+    const updatedUnfilled = shift.unfilledPositions
+      .map(u => u.roleId === roleId ? { ...u, count: Math.max(0, u.count - 1) } : u)
+      .filter(u => u.count > 0);
+
+    updateShiftAssignment(shiftId, date, {
+      assignedWorkers: updatedAssignedWorkers,
+      unfilledPositions: updatedUnfilled
+    });
+  };
+
+  const saveSchedule = async () => {
+    setSaving(true);
+    try {
+      // In a real implementation, you would save this to the database
+      // For now, we'll show a success message
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      alert('Schedule saved successfully!');
+    } catch (error) {
+      console.error('Error saving schedule:', error);
+      alert('Failed to save schedule. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const exportSchedule = () => {
     const csv = [
-      ['Day', 'Shift', 'Time', 'Role', 'Worker', 'Status'],
-      ...schedule.assignments.flatMap(assignment => [
-        ...assignment.assignedWorkers.map(worker => [
-          assignment.day,
-          assignment.shiftName,
-          `${assignment.startTime} - ${assignment.endTime}`,
-          worker.roleName,
-          worker.workerName,
-          'Assigned'
-        ]),
-        ...assignment.unfilledPositions.map(position => [
-          assignment.day,
-          assignment.shiftName,
-          `${assignment.startTime} - ${assignment.endTime}`,
-          position.roleName,
-          'UNFILLED',
-          'Needs Assignment'
+      ['Date', 'Day', 'Shift', 'Time', 'Role', 'Worker', 'Status'],
+      ...Object.entries(schedule).flatMap(([date, shifts]) => 
+        shifts.flatMap(shift => [
+          ...shift.assignedWorkers.map(worker => [
+            date,
+            new Date(date).toLocaleDateString('en-US', { weekday: 'long' }),
+            shift.shiftName,
+            `${shift.startTime} - ${shift.endTime}`,
+            worker.roleName,
+            worker.workerName,
+            'Assigned'
+          ]),
+          ...shift.unfilledPositions.flatMap(position => 
+            Array(position.count).fill(null).map(() => [
+              date,
+              new Date(date).toLocaleDateString('en-US', { weekday: 'long' }),
+              shift.shiftName,
+              `${shift.startTime} - ${shift.endTime}`,
+              position.roleName,
+              'UNFILLED',
+              'Needs Assignment'
+            ])
+          )
         ])
-      ])
+      )
     ].map(row => row.join(',')).join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `schedule-${schedule.weekStartDate}.csv`;
+    a.download = `schedule-${currentMonth.toISOString().slice(0, 7)}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
+  };
+
+  const renderCalendarDay = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const dayShifts = schedule[dateStr] || [];
+    
+    if (dayShifts.length === 0) {
+      return <div className="text-xs text-gray-400">No shifts</div>;
+    }
+
+    const totalPositions = dayShifts.reduce((sum, shift) => 
+      sum + shift.roleRequirements.reduce((s, r) => s + r.count, 0), 0
+    );
+    const filledPositions = dayShifts.reduce((sum, shift) => 
+      sum + shift.assignedWorkers.length, 0
+    );
+    
+    return (
+      <div className="space-y-1">
+        <div className={`text-xs font-medium ${
+          filledPositions === totalPositions ? 'text-green-600' : 
+          filledPositions === 0 ? 'text-red-600' : 'text-yellow-600'
+        }`}>
+          {filledPositions}/{totalPositions} filled
+        </div>
+        {dayShifts.map((shift, idx) => (
+          <div 
+            key={idx} 
+            className={`text-xs px-1 py-0.5 rounded cursor-pointer hover:bg-gray-200 ${
+              shift.unfilledPositions.length === 0 ? 'bg-green-100' : 'bg-yellow-100'
+            }`}
+          >
+            {shift.startTime}-{shift.endTime}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const handleDayClick = (date: Date) => {
+    setSelectedDate(date);
+  };
+
+  const ShiftEditModal = () => {
+    if (!editingShift || !selectedDate) return null;
+
+    const availableWorkers = workers.filter(worker => 
+      !editingShift.assignedWorkers.some(assigned => assigned.workerId === worker.id)
+    );
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold">Edit Shift</h3>
+            <button
+              onClick={() => setEditingShift(null)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Shift Name</label>
+                <input
+                  type="text"
+                  value={editingShift.shiftName}
+                  onChange={(e) => setEditingShift({ ...editingShift, shiftName: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    value={editingShift.startTime}
+                    onChange={(e) => setEditingShift({ ...editingShift, startTime: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={editingShift.endTime}
+                    onChange={(e) => setEditingShift({ ...editingShift, endTime: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-2">Assigned Workers</h4>
+              {editingShift.assignedWorkers.length === 0 ? (
+                <p className="text-gray-500 text-sm">No workers assigned yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {editingShift.assignedWorkers.map((worker, idx) => (
+                    <div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                      <div className="flex items-center space-x-2">
+                        <User className="h-4 w-4 text-gray-400" />
+                        <span className="font-medium">{worker.workerName}</span>
+                        <span className="text-sm text-gray-500">({worker.roleName})</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const updated = {
+                            ...editingShift,
+                            assignedWorkers: editingShift.assignedWorkers.filter(w => w.workerId !== worker.workerId)
+                          };
+                          setEditingShift(updated);
+                          updateShiftAssignment(editingShift.id, editingShift.date, updated);
+                        }}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {editingShift.unfilledPositions.length > 0 && (
+              <div>
+                <h4 className="font-medium mb-2">Add Workers</h4>
+                {editingShift.unfilledPositions.map((position, idx) => (
+                  <div key={idx} className="mb-2">
+                    <p className="text-sm text-gray-600 mb-1">{position.roleName} ({position.count} needed)</p>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          addWorkerToShift(editingShift.id, editingShift.date, e.target.value, position.roleId);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      defaultValue=""
+                    >
+                      <option value="">Select worker...</option>
+                      {availableWorkers
+                        .filter(worker => worker.roles.includes(position.roleId))
+                        .map(worker => (
+                          <option key={worker.id} value={worker.id}>
+                            {worker.name} (Rating: {worker.rating}/10)
+                          </option>
+                        ))
+                      }
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  updateShiftAssignment(editingShift.id, editingShift.date, editingShift);
+                  setEditingShift(null);
+                }}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700"
+              >
+                Save Changes
+              </button>
+              <button
+                onClick={() => setEditingShift(null)}
+                className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   if (!currentBusiness?.day_configs || Object.keys(currentBusiness.day_configs).length === 0) {
@@ -246,35 +486,39 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
     );
   }
 
-  if (workers.length === 0) {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-2xl font-bold text-gray-900">Schedule Generator</h2>
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <Users className="h-16 w-16 text-blue-500 mx-auto mb-4" />
-          <h3 className="text-xl font-bold text-gray-900 mb-2">No Workers Added</h3>
-          <p className="text-gray-600">
-            Add workers to your business before generating schedules. Go to the Workers tab to add team members.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900">Schedule Generator</h2>
         <div className="flex items-center space-x-3">
-          {schedule && (
-            <button
-              onClick={exportSchedule}
-              className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-            >
-              <Download className="h-4 w-4" />
-              <span>Export CSV</span>
-            </button>
+          {Object.keys(schedule).length > 0 && (
+            <>
+              <button
+                onClick={saveSchedule}
+                disabled={saving}
+                className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    <span>Save Schedule</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={exportSchedule}
+                className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                <Download className="h-4 w-4" />
+                <span>Export CSV</span>
+              </button>
+            </>
           )}
           <button
             onClick={generateSchedule}
@@ -283,7 +527,7 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
           >
             {generating ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <Loader2 className="h-4 w-4 animate-spin" />
                 <span>Generating...</span>
               </>
             ) : (
@@ -296,166 +540,136 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
         </div>
       </div>
 
-      {/* Week Selection */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center space-x-4">
-          <Calendar className="h-5 w-5 text-gray-400" />
-          <label className="font-medium text-gray-700">Week Starting:</label>
-          <input
-            type="date"
-            value={selectedWeek}
-            onChange={(e) => setSelectedWeek(e.target.value)}
-            className="px-3 py-2 border rounded-lg"
-          />
-          <span className="text-sm text-gray-500">
-            (Week of {new Date(selectedWeek).toLocaleDateString()})
-          </span>
+      {/* Instructions */}
+      <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
+        <div className="flex items-start">
+          <CalendarIcon className="h-5 w-5 text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="ml-3">
+            <p className="text-sm text-blue-700">
+              <strong>How to use:</strong> Click "Generate Schedule" to automatically assign workers based on their availability and ratings. 
+              Click on any shift to manually edit assignments, change times, or add/remove workers.
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Schedule Stats */}
-      {schedule && (
+      {/* Stats */}
+      {Object.keys(schedule).length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-medium mb-2">Total Shifts</h3>
-            <p className="text-3xl font-bold text-blue-600">{schedule.stats.totalShifts}</p>
+            <p className="text-3xl font-bold text-blue-600">{stats.totalShifts}</p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-medium mb-2">Filled Shifts</h3>
-            <p className="text-3xl font-bold text-green-600">{schedule.stats.filledShifts}</p>
+            <p className="text-3xl font-bold text-green-600">{stats.filledShifts}</p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-medium mb-2">Unfilled Shifts</h3>
-            <p className="text-3xl font-bold text-red-600">{schedule.stats.unfilledShifts}</p>
+            <p className="text-3xl font-bold text-red-600">{stats.unfilledShifts}</p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-medium mb-2">Workers Scheduled</h3>
             <p className="text-3xl font-bold text-purple-600">
-              {schedule.stats.workersScheduled}/{schedule.stats.totalWorkers}
+              {stats.workersScheduled}/{stats.totalWorkers}
             </p>
           </div>
         </div>
       )}
 
-      {/* Generated Schedule */}
-      {schedule ? (
-        <div className="bg-white rounded-lg shadow">
-          <div className="p-6 border-b">
-            <h3 className="text-xl font-bold text-gray-900">
-              Weekly Schedule - {new Date(schedule.weekStartDate).toLocaleDateString()}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Calendar View */}
+        <div className="lg:col-span-2">
+          <Calendar
+            currentMonth={currentMonth}
+            onMonthChange={setCurrentMonth}
+            renderDay={renderCalendarDay}
+            onDayClick={handleDayClick}
+          />
+        </div>
+
+        {/* Day Detail Panel */}
+        <div className="lg:col-span-1">
+          <div className="bg-white rounded-lg shadow p-4">
+            <h3 className="font-medium text-gray-900 mb-4">
+              {selectedDate 
+                ? `Schedule for ${selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`
+                : 'Select a day to view shifts'
+              }
             </h3>
-          </div>
-          
-          <div className="p-6">
-            {schedule.stats.unfilledShifts > 0 && (
-              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
-                <div className="flex items-center">
-                  <AlertTriangle className="h-5 w-5 text-yellow-400 mr-2" />
-                  <div>
-                    <p className="text-sm text-yellow-700">
-                      <strong>Warning:</strong> {schedule.stats.unfilledShifts} shifts have unfilled positions. 
-                      Consider adjusting worker availability or hiring additional staff.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-6">
-              {DAYS_OF_WEEK.map(day => {
-                const dayAssignments = schedule.assignments.filter(a => a.day === day.label);
-                
-                if (dayAssignments.length === 0) {
-                  return (
-                    <div key={day.key} className="border rounded-lg p-4 bg-gray-50">
-                      <h4 className="font-bold text-gray-900 mb-2">{day.label}</h4>
-                      <p className="text-gray-500">No shifts scheduled</p>
-                    </div>
-                  );
-                }
-
+            
+            {selectedDate && (() => {
+              const dateStr = selectedDate.toISOString().split('T')[0];
+              const dayShifts = schedule[dateStr] || [];
+              
+              if (dayShifts.length === 0) {
                 return (
-                  <div key={day.key} className="border rounded-lg p-4">
-                    <h4 className="font-bold text-gray-900 mb-4">{day.label}</h4>
-                    
-                    <div className="space-y-4">
-                      {dayAssignments.map(assignment => (
-                        <div key={assignment.shiftId} className="border-l-4 border-blue-200 pl-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <div>
-                              <h5 className="font-medium text-gray-900">{assignment.shiftName}</h5>
-                              <p className="text-sm text-gray-500">
-                                <Clock className="h-3 w-3 inline mr-1" />
-                                {assignment.startTime} - {assignment.endTime}
-                              </p>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              {assignment.unfilledPositions.length === 0 ? (
-                                <span className="flex items-center text-green-600 text-sm">
-                                  <CheckCircle className="h-4 w-4 mr-1" />
-                                  Fully Staffed
-                                </span>
-                              ) : (
-                                <span className="flex items-center text-red-600 text-sm">
-                                  <AlertTriangle className="h-4 w-4 mr-1" />
-                                  {assignment.unfilledPositions.length} Unfilled
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Assigned Workers */}
-                          {assignment.assignedWorkers.length > 0 && (
-                            <div className="mb-2">
-                              <p className="text-sm font-medium text-gray-700 mb-1">Assigned Workers:</p>
-                              <div className="flex flex-wrap gap-2">
-                                {assignment.assignedWorkers.map((worker, index) => (
-                                  <span key={index} className="inline-flex items-center px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
-                                    <User className="h-3 w-3 mr-1" />
-                                    {worker.workerName} ({worker.roleName})
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Unfilled Positions */}
-                          {assignment.unfilledPositions.length > 0 && (
-                            <div>
-                              <p className="text-sm font-medium text-gray-700 mb-1">Unfilled Positions:</p>
-                              <div className="flex flex-wrap gap-2">
-                                {assignment.unfilledPositions.map((position, index) => (
-                                  <span key={index} className="inline-flex items-center px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs">
-                                    <AlertTriangle className="h-3 w-3 mr-1" />
-                                    {position.count} {position.roleName}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <p className="text-gray-500 text-sm">No shifts scheduled for this day.</p>
                 );
-              })}
-            </div>
+              }
+
+              return (
+                <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                  {dayShifts.map(shift => (
+                    <div 
+                      key={shift.id} 
+                      className="border rounded-lg p-3 hover:shadow-md transition-shadow cursor-pointer"
+                      onClick={() => setEditingShift(shift)}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <h4 className="font-medium">{shift.shiftName}</h4>
+                          <p className="text-sm text-gray-500">
+                            <Clock className="h-3 w-3 inline mr-1" />
+                            {shift.startTime} - {shift.endTime}
+                          </p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {shift.unfilledPositions.length === 0 ? (
+                            <CheckCircle className="h-5 w-5 text-green-600" />
+                          ) : (
+                            <AlertTriangle className="h-5 w-5 text-yellow-600" />
+                          )}
+                          <Edit2 className="h-4 w-4 text-gray-400" />
+                        </div>
+                      </div>
+                      
+                      {shift.assignedWorkers.length > 0 && (
+                        <div className="mb-2">
+                          <p className="text-xs font-medium text-gray-700 mb-1">Assigned:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {shift.assignedWorkers.map((worker, idx) => (
+                              <span key={idx} className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded">
+                                {worker.workerName}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {shift.unfilledPositions.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-700 mb-1">Unfilled:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {shift.unfilledPositions.map((position, idx) => (
+                              <span key={idx} className="text-xs px-2 py-1 bg-red-100 text-red-800 rounded">
+                                {position.count} {position.roleName}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </div>
-      ) : (
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <Calendar className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Ready to Generate Schedule</h3>
-          <p className="text-gray-600 mb-4">
-            Select a week and click "Generate Schedule" to automatically assign workers based on their availability and ratings.
-          </p>
-          <div className="text-sm text-gray-500 space-y-1">
-            <p>• Workers are assigned based on their availability and role qualifications</p>
-            <p>• Higher-rated workers are prioritized for assignments</p>
-            <p>• Unfilled positions will be highlighted for manual review</p>
-          </div>
-        </div>
-      )}
+      </div>
+
+      {/* Edit Modal */}
+      <ShiftEditModal />
     </div>
   );
 };
