@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2, Lock, UserPlus } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Users, Settings, Bell, CheckCircle, User, RefreshCw, Plus, LogOut, CalendarDays, AlertTriangle, Loader2, Lock, UserPlus } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import SetupWizard from './SetupWizard';
 import WorkerManagement from './WorkerManagement';
@@ -24,7 +24,7 @@ interface Worker {
   rating: number;
   roles: number[];
   business_id: string;
-  monthly_availability: Record<string, Record<string, boolean>>;
+  monthly_availability: Record<string, Record<string, any>>;
   invite_sent: boolean;
   user_created: boolean;
 }
@@ -40,6 +40,7 @@ interface Business {
 interface Role {
   id: number;
   name: string;
+  color?: string;
 }
 
 interface DayConfig {
@@ -220,12 +221,9 @@ const EmployeeSchedulingSystem: React.FC = () => {
   
         if (userError) {
           console.error('Error creating user record:', userError);
-          // If user record creation fails, we should still update the worker
-          // This handles cases where the user might already exist
         }
   
         // Update worker record to mark as having user account
-        // This should work even if the user record already exists
         const { error: updateError } = await supabase
           .from('workers')
           .update({ user_created: true })
@@ -256,7 +254,6 @@ const EmployeeSchedulingSystem: React.FC = () => {
     } catch (error: any) {
       console.error('Signup error:', error);
       
-      // Provide helpful error messages
       if (error.message?.includes('User already registered')) {
         setError('An account with this email already exists. Please log in instead.');
       } else if (error.message?.includes('No worker account found')) {
@@ -312,8 +309,8 @@ const EmployeeSchedulingSystem: React.FC = () => {
         return [];
       }
       return [
-        { id: 'dashboard', label: 'My Dashboard', icon: Calendar },
-        { id: 'schedule', label: 'Schedule', icon: Clock },
+        { id: 'dashboard', label: 'My Dashboard', icon: CalendarIcon },
+        { id: 'schedule', label: 'My Schedule', icon: Clock },
         { id: 'availability', label: 'My Availability', icon: CalendarDays },
       ];
     }
@@ -325,8 +322,8 @@ const EmployeeSchedulingSystem: React.FC = () => {
         baseItems.push({ id: 'setup', label: 'Initial Setup', icon: Settings, highlight: true });
       } else {
         baseItems.push(
-          { id: 'dashboard', label: 'Dashboard', icon: Calendar },
-          { id: 'schedule', label: 'Schedule', icon: Clock }
+          { id: 'dashboard', label: 'Dashboard', icon: CalendarIcon },
+          { id: 'schedule', label: 'Schedule Generator', icon: Clock }
         );
       }
       
@@ -357,7 +354,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
           <div className="text-center mb-8">
-            <Calendar className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+            <CalendarIcon className="h-12 w-12 text-blue-600 mx-auto mb-4" />
             <h1 className="text-2xl font-bold text-gray-900">ShiftSmart</h1>
             <p className="text-gray-600">Employee Scheduling System</p>
           </div>
@@ -525,7 +522,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <Calendar className="h-8 w-8 text-blue-600" />
+              <CalendarIcon className="h-8 w-8 text-blue-600" />
               <div>
                 <h1 className="text-xl font-semibold text-gray-900">ShiftSmart</h1>
                 <p className="text-sm text-gray-500">{currentBusiness?.name || 'Loading...'}</p>
@@ -654,6 +651,30 @@ const EmployeeSchedulingSystem: React.FC = () => {
                   </p>
                 </div>
               )}
+
+              {currentUser?.role === 'employee' && isSetupComplete() && (
+                <div className="bg-white rounded-lg shadow p-6">
+                  <h3 className="text-lg font-medium mb-4">Quick Actions</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                      onClick={() => setActiveTab('availability')}
+                      className="p-4 border rounded-lg hover:bg-gray-50 text-left"
+                    >
+                      <CalendarDays className="h-8 w-8 text-blue-600 mb-2" />
+                      <h4 className="font-medium">Set Availability</h4>
+                      <p className="text-sm text-gray-600">Update your availability for upcoming shifts</p>
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('schedule')}
+                      className="p-4 border rounded-lg hover:bg-gray-50 text-left"
+                    >
+                      <Clock className="h-8 w-8 text-green-600 mb-2" />
+                      <h4 className="font-medium">View Schedule</h4>
+                      <p className="text-sm text-gray-600">Check your assigned shifts</p>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -692,7 +713,7 @@ const EmployeeSchedulingSystem: React.FC = () => {
                 </div>
               ) : (
                 // Admin Schedule Generator
-                currentUser && (
+                currentUser && currentBusiness && (
                   <ScheduleGenerator
                     businessId={currentUser.business_id}
                     currentBusiness={currentBusiness}
@@ -742,11 +763,22 @@ const EmployeeSchedulingSystem: React.FC = () => {
                   </div>
                 </div>
               </div>
+
+              <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-medium mb-4">Account Settings</h3>
+                <button
+                  onClick={() => setShowPasswordChange(true)}
+                  className="flex items-center space-x-2 px-4 py-2 border rounded-lg hover:bg-gray-50"
+                >
+                  <Lock className="h-4 w-4" />
+                  <span>Change Password</span>
+                </button>
+              </div>
             </div>
           )}
 
           {/* Availability (Employee) */}
-          {activeTab === 'availability' && currentUser?.role === 'employee' && currentUser.worker_id && (
+          {activeTab === 'availability' && currentUser?.role === 'employee' && currentUser.worker_id && currentBusiness && (
             <AvailabilityManagement
               workerId={currentUser.worker_id}
               currentUser={currentUser}
