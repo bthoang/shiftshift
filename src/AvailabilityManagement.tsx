@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Save, RotateCcw, CheckCircle } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Save, RotateCcw, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import { Calendar } from './Calendar';
 
 interface AvailabilityManagementProps {
   workerId: string;
@@ -8,89 +9,82 @@ interface AvailabilityManagementProps {
   currentBusiness: any;
 }
 
-interface TimeSlot {
+interface ShiftAvailability {
+  shiftId: string;
   start: string;
   end: string;
   available: boolean;
+  shiftName: string;
 }
 
 interface DayAvailability {
-  [key: string]: TimeSlot[];
+  date: string;
+  dayOfWeek: number;
+  shifts: ShiftAvailability[];
 }
-
-const DAYS_OF_WEEK = [
-  { key: 'monday', label: 'Monday' },
-  { key: 'tuesday', label: 'Tuesday' },
-  { key: 'wednesday', label: 'Wednesday' },
-  { key: 'thursday', label: 'Thursday' },
-  { key: 'friday', label: 'Friday' },
-  { key: 'saturday', label: 'Saturday' },
-  { key: 'sunday', label: 'Sunday' }
-];
 
 const AvailabilityManagement: React.FC<AvailabilityManagementProps> = ({
   workerId,
   currentUser,
   currentBusiness
 }) => {
-  const [availability, setAvailability] = useState<DayAvailability>({});
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [availability, setAvailability] = useState<Record<string, DayAvailability>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
-  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [hasChanges, setHasChanges] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  // Initialize availability structure
   useEffect(() => {
-    initializeAvailability();
-  }, [currentBusiness]);
+    loadAvailability();
+  }, [currentMonth, workerId]);
 
-  const initializeAvailability = () => {
-    if (!currentBusiness?.day_configs) {
-      setLoading(false);
-      return;
-    }
-
-    const initialAvailability: DayAvailability = {};
-    
-    DAYS_OF_WEEK.forEach(({ key }) => {
-      // Get day index (Sunday=0, Monday=1, etc.)
-      const dayIndex = key === 'sunday' ? 0 : DAYS_OF_WEEK.findIndex(d => d.key === key);
-      const dayConfig = currentBusiness.day_configs[dayIndex];
-      
-      if (dayConfig?.shifts) {
-        initialAvailability[key] = dayConfig.shifts.map((shift: any) => ({
-          start: shift.start,
-          end: shift.end,
-          available: true // Default to available
-        }));
-      } else {
-        initialAvailability[key] = [];
-      }
-    });
-
-    setAvailability(initialAvailability);
-    loadExistingAvailability(initialAvailability);
-  };
-
-  const loadExistingAvailability = async (defaultAvailability: DayAvailability) => {
+  const loadAvailability = async () => {
+    setLoading(true);
     try {
+      // Get worker's saved availability
       const { data: worker } = await supabase
         .from('workers')
         .select('monthly_availability')
         .eq('id', workerId)
         .single();
 
-      if (worker?.monthly_availability) {
-        const monthKey = `${currentYear}-${currentMonth + 1}`;
-        const monthlyData = worker.monthly_availability[monthKey];
+      const monthKey = `${currentMonth.getFullYear()}-${currentMonth.getMonth() + 1}`;
+      const savedAvailability = worker?.monthly_availability?.[monthKey] || {};
+
+      // Initialize availability for the month
+      const monthAvailability: Record<string, DayAvailability> = {};
+      const daysInMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+        const dateStr = date.toISOString().split('T')[0];
+        const dayOfWeek = date.getDay();
         
-        if (monthlyData) {
-          setAvailability(monthlyData);
-        } else {
-          setAvailability(defaultAvailability);
+        // Get shifts for this day from business config
+        const dayConfig = currentBusiness.day_configs?.[dayOfWeek];
+        
+        monthAvailability[dateStr] = {
+          date: dateStr,
+          dayOfWeek,
+          shifts: []
+        };
+
+        if (dayConfig?.shifts) {
+          monthAvailability[dateStr].shifts = dayConfig.shifts.map((shift: any, index: number) => {
+            const shiftKey = `${dateStr}-${index}`;
+            return {
+              shiftId: shiftKey,
+              start: shift.start,
+              end: shift.end,
+              shiftName: shift.name,
+              available: savedAvailability[dateStr]?.shifts?.[index]?.available ?? true
+            };
+          });
         }
       }
+
+      setAvailability(monthAvailability);
     } catch (error) {
       console.error('Error loading availability:', error);
     } finally {
@@ -98,31 +92,55 @@ const AvailabilityManagement: React.FC<AvailabilityManagementProps> = ({
     }
   };
 
-  const toggleAvailability = (day: string, shiftIndex: number) => {
-    setAvailability(prev => ({
-      ...prev,
-      [day]: prev[day].map((shift, index) => 
-        index === shiftIndex 
-          ? { ...shift, available: !shift.available }
-          : shift
-      )
-    }));
+  const toggleShiftAvailability = (date: string, shiftIndex: number) => {
+    setAvailability(prev => {
+      const newAvailability = { ...prev };
+      if (newAvailability[date]) {
+        newAvailability[date] = {
+          ...newAvailability[date],
+          shifts: newAvailability[date].shifts.map((shift, idx) => 
+            idx === shiftIndex 
+              ? { ...shift, available: !shift.available }
+              : shift
+          )
+        };
+      }
+      return newAvailability;
+    });
     setHasChanges(true);
   };
 
-  const setDayFullyAvailable = (day: string, available: boolean) => {
-    setAvailability(prev => ({
-      ...prev,
-      [day]: prev[day].map(shift => ({ ...shift, available }))
-    }));
+  const setDayAvailability = (date: string, available: boolean) => {
+    setAvailability(prev => {
+      const newAvailability = { ...prev };
+      if (newAvailability[date]) {
+        newAvailability[date] = {
+          ...newAvailability[date],
+          shifts: newAvailability[date].shifts.map(shift => ({ ...shift, available }))
+        };
+      }
+      return newAvailability;
+    });
     setHasChanges(true);
   };
 
   const saveAvailability = async () => {
     setSaving(true);
     try {
-      const monthKey = `${currentYear}-${currentMonth + 1}`;
+      const monthKey = `${currentMonth.getFullYear()}-${currentMonth.getMonth() + 1}`;
       
+      // Format availability for saving
+      const formattedAvailability: any = {};
+      Object.entries(availability).forEach(([date, dayData]) => {
+        if (dayData.shifts.length > 0) {
+          formattedAvailability[date] = {
+            shifts: dayData.shifts.map(shift => ({
+              available: shift.available
+            }))
+          };
+        }
+      });
+
       // Get current monthly availability
       const { data: currentWorker } = await supabase
         .from('workers')
@@ -132,7 +150,7 @@ const AvailabilityManagement: React.FC<AvailabilityManagementProps> = ({
 
       const updatedMonthlyAvailability = {
         ...(currentWorker?.monthly_availability || {}),
-        [monthKey]: availability
+        [monthKey]: formattedAvailability
       };
 
       const { error } = await supabase
@@ -153,34 +171,54 @@ const AvailabilityManagement: React.FC<AvailabilityManagementProps> = ({
   };
 
   const resetToDefault = () => {
-    initializeAvailability();
+    const resetAvailability = { ...availability };
+    Object.keys(resetAvailability).forEach(date => {
+      resetAvailability[date].shifts = resetAvailability[date].shifts.map(shift => ({
+        ...shift,
+        available: true
+      }));
+    });
+    setAvailability(resetAvailability);
     setHasChanges(true);
   };
 
-  const getMonthName = () => {
-    return new Date(currentYear, currentMonth).toLocaleDateString('en-US', { 
-      month: 'long', 
-      year: 'numeric' 
-    });
+  const renderCalendarDay = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const dayData = availability[dateStr];
+    
+    if (!dayData || dayData.shifts.length === 0) {
+      return <div className="text-xs text-gray-400">No shifts</div>;
+    }
+
+    const availableShifts = dayData.shifts.filter(s => s.available).length;
+    const totalShifts = dayData.shifts.length;
+    
+    return (
+      <div className="space-y-1">
+        <div className={`text-xs font-medium ${
+          availableShifts === totalShifts ? 'text-green-600' : 
+          availableShifts === 0 ? 'text-red-600' : 'text-yellow-600'
+        }`}>
+          {availableShifts}/{totalShifts} shifts
+        </div>
+        <div className="space-y-1">
+          {dayData.shifts.map((shift, idx) => (
+            <div 
+              key={idx} 
+              className={`text-xs px-1 py-0.5 rounded ${
+                shift.available ? 'bg-green-100' : 'bg-gray-100'
+              }`}
+            >
+              {shift.start}-{shift.end}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
-  const navigateMonth = (direction: 'prev' | 'next') => {
-    if (direction === 'next') {
-      if (currentMonth === 11) {
-        setCurrentMonth(0);
-        setCurrentYear(currentYear + 1);
-      } else {
-        setCurrentMonth(currentMonth + 1);
-      }
-    } else {
-      if (currentMonth === 0) {
-        setCurrentMonth(11);
-        setCurrentYear(currentYear - 1);
-      } else {
-        setCurrentMonth(currentMonth - 1);
-      }
-    }
-    setHasChanges(false);
+  const handleDayClick = (date: Date) => {
+    setSelectedDate(date);
   };
 
   if (loading) {
@@ -188,24 +226,8 @@ const AvailabilityManagement: React.FC<AvailabilityManagementProps> = ({
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-900">My Availability</h2>
         <div className="bg-white rounded-lg shadow p-8 text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="text-gray-500 mt-4">Loading availability...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!currentBusiness?.day_configs || Object.keys(currentBusiness.day_configs).length === 0) {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-2xl font-bold text-gray-900">My Availability</h2>
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <Calendar className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-xl font-bold text-gray-900 mb-2">No Schedule Configured</h3>
-          <p className="text-gray-600">
-            Your administrator hasn't set up the work schedule yet. 
-            Please contact your manager to configure the business schedule.
-          </p>
+          <Loader2 className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-gray-500">Loading availability...</p>
         </div>
       </div>
     );
@@ -232,7 +254,7 @@ const AvailabilityManagement: React.FC<AvailabilityManagementProps> = ({
             >
               {saving ? (
                 <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  <Loader2 className="h-4 w-4 animate-spin" />
                   <span>Saving...</span>
                 </>
               ) : (
@@ -246,129 +268,126 @@ const AvailabilityManagement: React.FC<AvailabilityManagementProps> = ({
         </div>
       </div>
 
-      {/* Month Navigation */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between mb-6">
-          <button
-            onClick={() => navigateMonth('prev')}
-            className="flex items-center space-x-2 px-3 py-1 text-gray-600 hover:text-gray-800"
-          >
-            ← Previous Month
-          </button>
-          <h3 className="text-xl font-bold text-gray-900">{getMonthName()}</h3>
-          <button
-            onClick={() => navigateMonth('next')}
-            className="flex items-center space-x-2 px-3 py-1 text-gray-600 hover:text-gray-800"
-          >
-            Next Month →
-          </button>
-        </div>
-
-        {/* Instructions */}
-        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
-          <div className="flex items-start">
-            <div className="flex-shrink-0">
-              <Clock className="h-5 w-5 text-blue-400" />
-            </div>
-            <div className="ml-3">
-              <p className="text-sm text-blue-700">
-                <strong>How to set your availability:</strong> Click on individual time slots to toggle your availability. 
-                Green means you're available, gray means you're not. Use the "All Day" buttons to quickly set your availability for entire days.
-              </p>
-            </div>
+      {/* Instructions */}
+      <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
+        <div className="flex items-start">
+          <CalendarIcon className="h-5 w-5 text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="ml-3">
+            <p className="text-sm text-blue-700">
+              <strong>How to set your availability:</strong> Click on any day to see and edit your shift availability. 
+              Green shifts mean you're available, gray means you're not. Your manager will use this information when creating schedules.
+            </p>
           </div>
         </div>
+      </div>
 
-        {/* Availability Grid */}
-        <div className="space-y-4">
-          {DAYS_OF_WEEK.map(({ key, label }) => {
-            const dayShifts = availability[key] || [];
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Calendar View */}
+        <div className="lg:col-span-2">
+          <Calendar
+            currentMonth={currentMonth}
+            onMonthChange={setCurrentMonth}
+            renderDay={renderCalendarDay}
+            onDayClick={handleDayClick}
+          />
+        </div>
+
+        {/* Day Detail Panel */}
+        <div className="lg:col-span-1">
+          <div className="bg-white rounded-lg shadow p-4">
+            <h3 className="font-medium text-gray-900 mb-4">
+              {selectedDate 
+                ? `Availability for ${selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`
+                : 'Select a day to edit availability'
+              }
+            </h3>
             
-            if (dayShifts.length === 0) {
+            {selectedDate && (() => {
+              const dateStr = selectedDate.toISOString().split('T')[0];
+              const dayData = availability[dateStr];
+              
+              if (!dayData || dayData.shifts.length === 0) {
+                return (
+                  <p className="text-gray-500 text-sm">No shifts scheduled for this day.</p>
+                );
+              }
+
               return (
-                <div key={key} className="border rounded-lg p-4 bg-gray-50">
-                  <h4 className="font-medium text-gray-900 mb-2">{label}</h4>
-                  <p className="text-sm text-gray-500">No shifts scheduled for this day</p>
-                </div>
-              );
-            }
-
-            const allAvailable = dayShifts.every(shift => shift.available);
-            const noneAvailable = dayShifts.every(shift => !shift.available);
-
-            return (
-              <div key={key} className="border rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium text-gray-900">{label}</h4>
-                  <div className="flex space-x-2">
+                <div className="space-y-3">
+                  <div className="flex space-x-2 mb-4">
                     <button
-                      onClick={() => setDayFullyAvailable(key, true)}
-                      className={`px-3 py-1 rounded text-sm transition-colors ${
-                        allAvailable 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-gray-100 text-gray-600 hover:bg-green-50'
-                      }`}
+                      onClick={() => setDayAvailability(dateStr, true)}
+                      className="flex-1 text-sm bg-green-100 text-green-800 py-1 px-3 rounded hover:bg-green-200"
                     >
-                      All Day Available
+                      Available All Day
                     </button>
                     <button
-                      onClick={() => setDayFullyAvailable(key, false)}
-                      className={`px-3 py-1 rounded text-sm transition-colors ${
-                        noneAvailable 
-                          ? 'bg-red-100 text-red-800' 
-                          : 'bg-gray-100 text-gray-600 hover:bg-red-50'
-                      }`}
+                      onClick={() => setDayAvailability(dateStr, false)}
+                      className="flex-1 text-sm bg-red-100 text-red-800 py-1 px-3 rounded hover:bg-red-200"
                     >
                       Not Available
                     </button>
                   </div>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {dayShifts.map((shift, index) => (
+                  
+                  {dayData.shifts.map((shift, index) => (
                     <button
                       key={index}
-                      onClick={() => toggleAvailability(key, index)}
-                      className={`p-3 rounded-lg border-2 transition-all text-left ${
+                      onClick={() => toggleShiftAvailability(dateStr, index)}
+                      className={`w-full p-3 rounded-lg border-2 transition-all text-left ${
                         shift.available
-                          ? 'bg-green-50 border-green-200 text-green-800 hover:bg-green-100'
-                          : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                          ? 'bg-green-50 border-green-200 hover:bg-green-100'
+                          : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
                       }`}
                     >
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="font-medium">
+                          <p className="font-medium">{shift.shiftName}</p>
+                          <p className="text-sm text-gray-600">
+                            <Clock className="h-3 w-3 inline mr-1" />
                             {shift.start} - {shift.end}
                           </p>
-                          <p className="text-xs">
-                            {shift.available ? 'Available' : 'Not Available'}
-                          </p>
                         </div>
-                        {shift.available && (
-                          <CheckCircle className="h-4 w-4 text-green-600" />
+                        {shift.available ? (
+                          <CheckCircle className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <div className="h-5 w-5 rounded-full border-2 border-gray-400" />
                         )}
                       </div>
                     </button>
                   ))}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })()}
+          </div>
 
-        {/* Save Reminder */}
-        {hasChanges && (
-          <div className="mt-6 bg-yellow-50 border-l-4 border-yellow-400 p-4">
-            <div className="flex items-center">
-              <div className="ml-3">
-                <p className="text-sm text-yellow-700">
-                  <strong>You have unsaved changes.</strong> Don't forget to save your availability before leaving this page.
-                </p>
+          {/* Legend */}
+          <div className="bg-gray-50 rounded-lg p-4 mt-4">
+            <h4 className="font-medium text-gray-900 mb-2">Legend</h4>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-green-100 border border-green-200 rounded"></div>
+                <span>Available</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-gray-100 border border-gray-200 rounded"></div>
+                <span>Not Available</span>
               </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
+
+      {/* Save Reminder */}
+      {hasChanges && (
+        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+          <div className="flex items-center">
+            <AlertCircle className="h-5 w-5 text-yellow-400 mr-2" />
+            <p className="text-sm text-yellow-700">
+              <strong>You have unsaved changes.</strong> Don't forget to save your availability before leaving this page.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
