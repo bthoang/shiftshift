@@ -1,3 +1,4 @@
+// Fixed ScheduleGenerator.tsx with proper database saving
 import React, { useState, useEffect } from 'react';
 import { Calendar as CalendarIcon, Users, Clock, RefreshCw, Download, AlertTriangle, CheckCircle, User, Edit2, Save, X, Plus, Trash2, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
@@ -52,6 +53,123 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
     workersScheduled: 0
   });
 
+  // Load existing schedule when component mounts or month changes
+  useEffect(() => {
+    loadExistingSchedule();
+  }, [currentMonth, businessId]);
+
+  const loadExistingSchedule = async () => {
+    try {
+      const month = currentMonth.getMonth() + 1;
+      const year = currentMonth.getFullYear();
+      const firstDay = new Date(year, month - 1, 1).toISOString().split('T')[0];
+      const lastDay = new Date(year, month, 0).toISOString().split('T')[0];
+
+      // Load scheduled shifts from database
+      const { data: scheduledShifts, error } = await supabase
+        .from('scheduled_shifts')
+        .select(`
+          *,
+          worker:workers!scheduled_shifts_worker_id_fkey(
+            id,
+            name,
+            roles
+          )
+        `)
+        .eq('business_id', businessId)
+        .gte('shift_date', firstDay)
+        .lte('shift_date', lastDay)
+        .order('shift_date', { ascending: true })
+        .order('start_time', { ascending: true });
+
+      if (error) throw error;
+
+      // Convert database format to component format
+      const loadedSchedule: ScheduleData = {};
+      
+      if (scheduledShifts && scheduledShifts.length > 0) {
+        scheduledShifts.forEach(shift => {
+          const dateStr = shift.shift_date;
+          if (!loadedSchedule[dateStr]) {
+            loadedSchedule[dateStr] = [];
+          }
+
+          // Group shifts by shift template
+          const existingShift = loadedSchedule[dateStr].find(s => 
+            s.shiftName === shift.shift_name && 
+            s.startTime === shift.start_time && 
+            s.endTime === shift.end_time
+          );
+
+          if (existingShift && shift.worker) {
+            const role = currentBusiness.roles?.find((r: any) => r.id === shift.role_id);
+            existingShift.assignedWorkers.push({
+              workerId: shift.worker_id,
+              workerName: shift.worker.name,
+              roleId: shift.role_id,
+              roleName: role?.name || 'Unknown'
+            });
+          } else if (!existingShift) {
+            // Create new shift entry
+            const newShift: ShiftSchedule = {
+              id: `${dateStr}-${loadedSchedule[dateStr].length}`,
+              date: dateStr,
+              shiftName: shift.shift_name,
+              startTime: shift.start_time,
+              endTime: shift.end_time,
+              roleRequirements: [],
+              assignedWorkers: [],
+              unfilledPositions: []
+            };
+
+            if (shift.worker) {
+              const role = currentBusiness.roles?.find((r: any) => r.id === shift.role_id);
+              newShift.assignedWorkers.push({
+                workerId: shift.worker_id,
+                workerName: shift.worker.name,
+                roleId: shift.role_id,
+                roleName: role?.name || 'Unknown'
+              });
+            }
+
+            loadedSchedule[dateStr].push(newShift);
+          }
+        });
+
+        setSchedule(loadedSchedule);
+        updateStats(loadedSchedule);
+      }
+    } catch (error) {
+      console.error('Error loading existing schedule:', error);
+    }
+  };
+
+  const updateStats = (scheduleData: ScheduleData) => {
+    let totalShifts = 0;
+    let filledShifts = 0;
+    const scheduledWorkerIds = new Set<string>();
+
+    Object.values(scheduleData).forEach(dayShifts => {
+      totalShifts += dayShifts.length;
+      dayShifts.forEach(shift => {
+        if (shift.unfilledPositions.length === 0 && shift.assignedWorkers.length > 0) {
+          filledShifts++;
+        }
+        shift.assignedWorkers.forEach(worker => {
+          scheduledWorkerIds.add(worker.workerId);
+        });
+      });
+    });
+
+    setStats({
+      totalShifts,
+      filledShifts,
+      unfilledShifts: totalShifts - filledShifts,
+      totalWorkers: workers.length,
+      workersScheduled: scheduledWorkerIds.size
+    });
+  };
+
   const generateSchedule = async () => {
     setGenerating(true);
     try {
@@ -71,9 +189,6 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
       // Generate schedule for the month
       const newSchedule: ScheduleData = {};
       const daysInMonth = new Date(year, month, 0).getDate();
-      let totalShifts = 0;
-      let filledShifts = 0;
-      const scheduledWorkerIds = new Set<string>();
 
       for (let day = 1; day <= daysInMonth; day++) {
         const date = new Date(year, month - 1, day);
@@ -136,7 +251,6 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
                 roleId: parseInt(roleId),
                 roleName: role.name
               });
-              scheduledWorkerIds.add(worker.id);
             }
 
             // Track unfilled positions
@@ -149,23 +263,12 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
             }
           });
 
-          totalShifts++;
-          if (shiftSchedule.unfilledPositions.length === 0) {
-            filledShifts++;
-          }
-
           newSchedule[dateStr].push(shiftSchedule);
         });
       }
 
       setSchedule(newSchedule);
-      setStats({
-        totalShifts,
-        filledShifts,
-        unfilledShifts: totalShifts - filledShifts,
-        totalWorkers: workers.length,
-        workersScheduled: scheduledWorkerIds.size
-      });
+      updateStats(newSchedule);
 
     } catch (error) {
       console.error('Error generating schedule:', error);
@@ -183,6 +286,7 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
           shift.id === shiftId ? { ...shift, ...updatedShift } : shift
         );
       }
+      updateStats(newSchedule);
       return newSchedule;
     });
   };
@@ -241,9 +345,49 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
   const saveSchedule = async () => {
     setSaving(true);
     try {
-      // In a real implementation, you would save this to the database
-      // For now, we'll show a success message
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // First, delete existing scheduled shifts for this month
+      const month = currentMonth.getMonth() + 1;
+      const year = currentMonth.getFullYear();
+      const firstDay = new Date(year, month - 1, 1).toISOString().split('T')[0];
+      const lastDay = new Date(year, month, 0).toISOString().split('T')[0];
+
+      const { error: deleteError } = await supabase
+        .from('scheduled_shifts')
+        .delete()
+        .eq('business_id', businessId)
+        .gte('shift_date', firstDay)
+        .lte('shift_date', lastDay);
+
+      if (deleteError) throw deleteError;
+
+      // Prepare shifts for insertion
+      const shiftsToInsert: any[] = [];
+      
+      Object.entries(schedule).forEach(([date, shifts]) => {
+        shifts.forEach(shift => {
+          shift.assignedWorkers.forEach(worker => {
+            shiftsToInsert.push({
+              business_id: businessId,
+              worker_id: worker.workerId,
+              shift_date: date,
+              shift_name: shift.shiftName,
+              start_time: shift.startTime,
+              end_time: shift.endTime,
+              role_id: worker.roleId
+            });
+          });
+        });
+      });
+
+      // Insert new scheduled shifts
+      if (shiftsToInsert.length > 0) {
+        const { error: insertError } = await supabase
+          .from('scheduled_shifts')
+          .insert(shiftsToInsert);
+
+        if (insertError) throw insertError;
+      }
+
       alert('Schedule saved successfully!');
     } catch (error) {
       console.error('Error saving schedule:', error);
@@ -321,7 +465,7 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
               shift.unfilledPositions.length === 0 ? 'bg-green-100' : 'bg-yellow-100'
             }`}
           >
-            {shift.startTime}-{shift.endTime}
+            {shift.startTime.slice(0, 5)}
           </div>
         ))}
       </div>
@@ -547,7 +691,7 @@ const ScheduleGenerator: React.FC<ScheduleGeneratorProps> = ({
           <div className="ml-3">
             <p className="text-sm text-blue-700">
               <strong>How to use:</strong> Click "Generate Schedule" to automatically assign workers based on their availability and ratings. 
-              Click on any shift to manually edit assignments, change times, or add/remove workers.
+              Click on any shift to manually edit assignments, change times, or add/remove workers. Don't forget to save your changes!
             </p>
           </div>
         </div>
