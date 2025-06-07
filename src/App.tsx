@@ -7,6 +7,7 @@ import PasswordChange from './PasswordChange';
 import AvailabilityManagement from './AvailabilityManagement';
 import ScheduleGenerator from './ScheduleGenerator';
 import EmployeeScheduleView from './EmployeeScheduleView';
+import TimeOffRequests from './TimeOffRequests';
 import { Calendar } from './Calendar';
 // Types
 interface User {
