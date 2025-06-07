@@ -234,13 +234,13 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ businessId, onComplete }) => 
         color: role.color
       }));
 
-      // Format day configs for database
-      // Format day configs for database
+    // Format day configs for database
       const dayConfigs: Record<number, any> = {};
       DAYS_OF_WEEK.forEach((day, index) => {
         const daySchedule = weeklySchedule[day];
         if (daySchedule.enabled) {
-          // Fix: Map days correctly (Monday=1, Sunday=0)
+          // Map days correctly: Sunday=0, Monday=1, Tuesday=2, etc.
+          // Since DAYS_OF_WEEK starts with Monday, we need to adjust
           const dayIndex = day === 'Sunday' ? 0 : index + 1;
           dayConfigs[dayIndex] = {
             shifts: daySchedule.shifts.map(shift => ({
